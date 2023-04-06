@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deployer-deployment
+  labels:
+    app: deployer
+spec:
+  selector:
+    matchLabels:
+      app: deployer
+      tier: backend
+      track: stable
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: deployer
+        tier: backend
+        track: stable
+    spec:
+      containers:
+        - name: deployer
+          image: dennisfaut/deployer:latest
+          env:
+            - name: IMAGENAME
+              value: dennisfaut/serverless_signer:latest
+            - name: SERVERPORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
