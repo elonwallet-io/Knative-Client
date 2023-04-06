@@ -70,7 +70,7 @@ func New() (*Server, error) {
 
 func (s *Server) Run() (err error) {
 	s.echo.POST("/enclaves", s.deployment)
-	s.echo.GET("/enclaves/:id", s.deletion)
+	s.echo.DELETE("/enclaves/:id", s.deletion)
 	port := os.Getenv("SERVERPORT")
 	err = s.echo.Start(":" + port)
 	if err == http.ErrServerClosed {
@@ -92,7 +92,7 @@ func (s *Server) deployment(c echo.Context) error {
 		return err
 	}
 	exists, _ := s.CheckIfServiceExists(c.Request().Context(), u.Name)
-	fmt.Println("service exists: %v", exists)
+	fmt.Printf("service exists: %v", exists)
 	if !exists {
 		err := s.DeployContainer(c.Request().Context(), u.Name)
 		if err != nil {
@@ -104,12 +104,13 @@ func (s *Server) deployment(c echo.Context) error {
 
 func (s *Server) deletion(c echo.Context) error {
 	username := c.Param("id")
+	fmt.Printf("Delete called for user %v \n", username)
 	exists, _ := s.CheckIfServiceExists(c.Request().Context(), username)
-	fmt.Println("service exists: %v", exists)
-	if !exists {
-		err := s.RemoveContainer(c.Request().Context(), username)
-		if err != nil {
-			return c.String(http.StatusInternalServerError, err.Error())
+	fmt.Printf("service exists: %v", exists)
+	if exists {
+		errors := s.clients.DeleteServiceForUser(c.Request().Context(), username)
+		if len(errors) > 0 {
+			return c.String(http.StatusInternalServerError, errors[0].Error())
 		}
 	}
 	return c.String(http.StatusOK, "")

@@ -6,7 +6,6 @@ import (
 )
 
 func main() {
-	fmt.Println("hello")
 	server, err := server.New()
 	if err != nil {
 		fmt.Println(err)
