@@ -13,6 +13,10 @@ import (
 	servingv1 "knative.dev/serving/pkg/client/clientset/versioned/typed/serving/v1"
 )
 
+type Url struct {
+	Url string `json:"url"`
+}
+
 type Server struct {
 	echo    *echo.Echo
 	clients *ServingClients
@@ -91,15 +95,19 @@ func (s *Server) deployment(c echo.Context) error {
 	if err := c.Bind(u); err != nil {
 		return err
 	}
-	exists, _ := s.CheckIfServiceExists(c.Request().Context(), u.Name)
-	fmt.Printf("service exists: %v", exists)
-	if !exists {
-		err := s.DeployContainer(c.Request().Context(), u.Name)
-		if err != nil {
-			return c.String(http.StatusInternalServerError, err.Error())
+	if u.Name != "" {
+		exists, _ := s.CheckIfServiceExists(c.Request().Context(), u.Name)
+		fmt.Printf("service exists: %v", exists)
+		if !exists {
+			link, err := s.DeployContainer(c.Request().Context(), u.Name)
+			if err != nil {
+				return c.JSON(http.StatusOK, Url{Url: link})
+			}
 		}
+		return c.String(http.StatusOK, "")
+	} else {
+		return c.String(http.StatusInternalServerError, "username can't be empty string")
 	}
-	return c.String(http.StatusOK, "")
 }
 
 func (s *Server) deletion(c echo.Context) error {

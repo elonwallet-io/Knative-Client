@@ -28,7 +28,7 @@ func (s *Server) CheckIfServiceExists(ctx context.Context, username string) (boo
 	return true, nil
 }
 
-func (s *Server) DeployContainer(ctx context.Context, username string) error {
+func (s *Server) DeployContainer(ctx context.Context, username string) (string, error) {
 
 	//"resources": map[string]interface{}{
 	//	"limits": map[string]interface{}{
@@ -70,11 +70,11 @@ func (s *Server) DeployContainer(ctx context.Context, username string) error {
 	// Create Deployment
 	result, err := s.clients.Services.Create(ctx, &service, metav1.CreateOptions{})
 	if err != nil {
-		return err
+		return "", err
 	}
 	fmt.Printf("Waiting for Service to transition to Ready...")
 	if err := WaitForServiceState(s.clients, result.Name, IsServiceReady, "ServiceIsReady"); err != nil {
-		return err
+		return "", err
 	}
 
 	fmt.Printf("Checking to ensure Service Status is populated for Ready service")
@@ -94,10 +94,14 @@ func (s *Server) DeployContainer(ctx context.Context, username string) error {
 		}
 		return true, nil
 	}); err != nil {
-		return err
+		return "", err
+	}
+	res, err := s.clients.Routes.Get(ctx, username, metav1.GetOptions{})
+	if err != nil {
+		return "", err
 	}
 	fmt.Printf("Created deployment %q.\n", result.GetName())
-	return nil
+	return res.GetSelfLink(), nil
 }
 
 func (clients *ServingClients) DeleteServiceForUser(ctx context.Context, username string) []error {
@@ -123,7 +127,7 @@ func (clients *ServingClients) DeleteServiceForUser(ctx context.Context, usernam
 	return errors
 }
 
-//Functionfrom https://github.com/knative/serving/blob/main/test/v1/service.go
+// Functionfrom https://github.com/knative/serving/blob/main/test/v1/service.go
 func WaitForServiceState(client *ServingClients, name string, inState func(s *knative.Service) (bool, error), desc string) error {
 	span := logging.GetEmitableSpan(context.Background(), fmt.Sprintf("WaitForServiceState/%s/%s", name, desc))
 	defer span.End()
@@ -146,7 +150,7 @@ func WaitForServiceState(client *ServingClients, name string, inState func(s *kn
 	return nil
 }
 
-//Function from https://github.com/knative/serving/blob/main/test/v1/service.go
+// Function from https://github.com/knative/serving/blob/main/test/v1/service.go
 func CheckServiceState(client *ServingClients, name string, inState func(s *knative.Service) (bool, error)) error {
 	var s *knative.Service
 	err := reconciler.RetryTestErrors(func(int) (err error) {
@@ -164,7 +168,7 @@ func CheckServiceState(client *ServingClients, name string, inState func(s *knat
 	return nil
 }
 
-//Function from https://github.com/knative/serving/blob/main/test/v1/service.go
+// Function from https://github.com/knative/serving/blob/main/test/v1/service.go
 func IsServiceReady(s *knative.Service) (bool, error) {
 	return s.IsReady(), nil
 }
