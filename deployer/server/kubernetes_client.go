@@ -19,22 +19,22 @@ const (
 	TIMEOUT   = 180 * time.Second
 )
 
-func (s *Server) CheckIfServiceExists(ctx context.Context, username string) (bool, error) {
+func (s *Server) CheckIfServiceExists(ctx context.Context, username string) (string, error) {
 	// Create Deployment
-	_, err := s.clients.Routes.Get(ctx, username, metav1.GetOptions{})
+	route, err := s.clients.Routes.Get(ctx, username, metav1.GetOptions{})
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return route.Status.URL.String(), nil
 }
 
 func (s *Server) DeployContainer(ctx context.Context, username string) (string, error) {
-
 	//"resources": map[string]interface{}{
 	//	"limits": map[string]interface{}{
 	//		"sgx.intel.com/epc": "2Mi",
 	//	},
 	//},
+	runTime := "kata-qemu"
 
 	service := knative.Service{
 		TypeMeta: metav1.TypeMeta{
@@ -49,6 +49,7 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 				Template: knative.RevisionTemplateSpec{
 					Spec: knative.RevisionSpec{
 						PodSpec: corev1.PodSpec{
+							RuntimeClassName: &runTime,
 							Containers: []corev1.Container{
 								{
 									Name:  username,
@@ -100,8 +101,8 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 	if err != nil {
 		return "", err
 	}
-	fmt.Printf("Created deployment %q.\n", result.GetName())
-	return res.GetSelfLink(), nil
+	fmt.Printf("Created deployment %q.\n", result.Status.URL.String())
+	return res.Status.URL.String(), nil
 }
 
 func (clients *ServingClients) DeleteServiceForUser(ctx context.Context, username string) []error {

@@ -96,15 +96,20 @@ func (s *Server) deployment(c echo.Context) error {
 		return err
 	}
 	if u.Name != "" {
-		exists, _ := s.CheckIfServiceExists(c.Request().Context(), u.Name)
-		fmt.Printf("service exists: %v", exists)
-		if !exists {
-			link, err := s.DeployContainer(c.Request().Context(), u.Name)
+		fmt.Println("checking if service " + u.Name + "exists... ")
+		route, _ := s.CheckIfServiceExists(c.Request().Context(), u.Name)
+		fmt.Println("service exists: " + route)
+		if route == "" {
+			fmt.Printf("deploying container..")
+			var err error
+			route, err = s.DeployContainer(c.Request().Context(), u.Name)
 			if err != nil {
-				return c.JSON(http.StatusOK, Url{Url: link})
+
+				return c.JSON(http.StatusInternalServerError, err.Error())
 			}
 		}
-		return c.String(http.StatusOK, "")
+		return c.JSON(http.StatusOK, Url{Url: route})
+
 	} else {
 		return c.String(http.StatusInternalServerError, "username can't be empty string")
 	}
@@ -113,9 +118,9 @@ func (s *Server) deployment(c echo.Context) error {
 func (s *Server) deletion(c echo.Context) error {
 	username := c.Param("id")
 	fmt.Printf("Delete called for user %v \n", username)
-	exists, _ := s.CheckIfServiceExists(c.Request().Context(), username)
-	fmt.Printf("service exists: %v", exists)
-	if exists {
+	route, _ := s.CheckIfServiceExists(c.Request().Context(), username)
+	fmt.Printf("service exists: %v", route)
+	if route != "" {
 		errors := s.clients.DeleteServiceForUser(c.Request().Context(), username)
 		if len(errors) > 0 {
 			return c.String(http.StatusInternalServerError, errors[0].Error())
