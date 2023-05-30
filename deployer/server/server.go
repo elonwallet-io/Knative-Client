@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"knative.dev/serving/pkg/client/clientset/versioned"
-	servingv1 "knative.dev/serving/pkg/client/clientset/versioned/typed/serving/v1"
+	test "knative.dev/serving/test"
 )
 
 type Url struct {
@@ -18,32 +20,45 @@ type Url struct {
 }
 
 type Server struct {
-	echo    *echo.Echo
-	clients *ServingClients
-	image   string
+	Echo    *echo.Echo
+	Clients *Kubernetes
+	Config  Config
 }
 
-type ServingClients struct {
-	Routes    servingv1.RouteInterface
-	Configs   servingv1.ConfigurationInterface
-	Revisions servingv1.RevisionInterface
-	Services  servingv1.ServiceInterface
+type Kubernetes struct {
+	Kubernetes *kubernetes.Clientset
+	Knative    *test.ServingClients
 }
 
-func newServingClients(cfg *rest.Config, namespace string) (*ServingClients, error) {
+func newServingClients(cfg *rest.Config, namespace string) (*Kubernetes, error) {
 	cfg.QPS = 100
 	cfg.Burst = 200
 	cs, err := versioned.NewForConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create clientset: %w", err)
+	}
 
-	return &ServingClients{
-		Configs:   cs.ServingV1().Configurations(namespace),
-		Revisions: cs.ServingV1().Revisions(namespace),
-		Routes:    cs.ServingV1().Routes(namespace),
-		Services:  cs.ServingV1().Services(namespace),
+	return &Kubernetes{
+		Kubernetes: clientset,
+		Knative: &test.ServingClients{
+			Configs:   cs.ServingV1().Configurations(namespace),
+			Revisions: cs.ServingV1().Revisions(namespace),
+			Routes:    cs.ServingV1().Routes(namespace),
+			Services:  cs.ServingV1().Services(namespace),
+		},
 	}, nil
+}
+
+type Config struct {
+	Image         string
+	FRONTEND_URL  string
+	FRONTEND_HOST string
+	BACKEND_URL   string
+	SGX_ACTIVATE  bool
 }
 
 type User struct {
@@ -64,19 +79,29 @@ func New() (*Server, error) {
 	if err != nil {
 		panic(err)
 	}
+	sgx_activate, err := strconv.ParseBool(os.Getenv("SGX_ACTIVATE"))
+	if err != nil {
+		panic(err)
+	}
 
 	return &Server{
-		echo:    echo.New(),
-		clients: clients,
-		image:   os.Getenv("IMAGENAME"),
+		Echo:    echo.New(),
+		Clients: clients,
+		Config: Config{
+			Image:         os.Getenv("IMAGENAME"),
+			FRONTEND_URL:  os.Getenv("FRONTEND_URL"),
+			BACKEND_URL:   os.Getenv("BACKEND_URL"),
+			FRONTEND_HOST: os.Getenv("FRONTEND_HOST"),
+			SGX_ACTIVATE:  sgx_activate,
+		},
 	}, nil
 }
 
 func (s *Server) Run() (err error) {
-	s.echo.POST("/enclaves", s.deployment)
-	s.echo.DELETE("/enclaves/:id", s.deletion)
+	s.Echo.POST("/enclaves", s.deployment)
+	s.Echo.DELETE("/enclaves/:id", s.deletion)
 	port := os.Getenv("SERVERPORT")
-	err = s.echo.Start(":" + port)
+	err = s.Echo.Start(":" + port)
 	if err == http.ErrServerClosed {
 		err = nil
 	}
@@ -87,7 +112,7 @@ func (s *Server) Stop() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	return s.echo.Shutdown(ctx)
+	return s.Echo.Shutdown(ctx)
 }
 
 func (s *Server) deployment(c echo.Context) error {
@@ -100,14 +125,15 @@ func (s *Server) deployment(c echo.Context) error {
 		route, _ := s.CheckIfServiceExists(c.Request().Context(), u.Name)
 		fmt.Println("service exists: " + route)
 		if route == "" {
-			fmt.Printf("deploying container..")
+			fmt.Println("deploying container..")
 			var err error
 			route, err = s.DeployContainer(c.Request().Context(), u.Name)
 			if err != nil {
-
+				fmt.Println("error: " + err.Error())
 				return c.JSON(http.StatusInternalServerError, err.Error())
 			}
 		}
+		fmt.Println(route)
 		return c.JSON(http.StatusOK, Url{Url: route})
 
 	} else {
@@ -121,7 +147,7 @@ func (s *Server) deletion(c echo.Context) error {
 	route, _ := s.CheckIfServiceExists(c.Request().Context(), username)
 	fmt.Printf("service exists: %v", route)
 	if route != "" {
-		errors := s.clients.DeleteServiceForUser(c.Request().Context(), username)
+		errors := s.Clients.DeleteServiceForUser(c.Request().Context(), username)
 		if len(errors) > 0 {
 			return c.String(http.StatusInternalServerError, errors[0].Error())
 		}

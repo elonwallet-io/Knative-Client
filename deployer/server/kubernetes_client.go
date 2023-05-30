@@ -6,12 +6,10 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"knative.dev/pkg/reconciler"
-	"knative.dev/pkg/test/logging"
 	knative "knative.dev/serving/pkg/apis/serving/v1"
-	"knative.dev/serving/test"
+	test "knative.dev/serving/test/v1"
 )
 
 const (
@@ -21,7 +19,7 @@ const (
 
 func (s *Server) CheckIfServiceExists(ctx context.Context, username string) (string, error) {
 	// Create Deployment
-	route, err := s.clients.Routes.Get(ctx, username, metav1.GetOptions{})
+	route, err := s.Clients.Knative.Routes.Get(ctx, username, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -29,12 +27,23 @@ func (s *Server) CheckIfServiceExists(ctx context.Context, username string) (str
 }
 
 func (s *Server) DeployContainer(ctx context.Context, username string) (string, error) {
+	vclaim := username + "-vclaim"
+	volume := username + "-volume"
+	s.CreatePersistentVolume(ctx, vclaim, volume, username)
+	s.CreatePersistentVolumeClaim(ctx, vclaim, volume, username)
 	//"resources": map[string]interface{}{
 	//	"limits": map[string]interface{}{
 	//		"sgx.intel.com/epc": "2Mi",
 	//	},
 	//},
-	runTime := "kata-qemu"
+	sgx := corev1.ResourceRequirements{}
+	if s.Config.SGX_ACTIVATE {
+		sgx = corev1.ResourceRequirements{
+			Limits: corev1.ResourceList{
+				"sgx.intel.com/epc": resource.MustParse("2Mi"),
+			},
+		}
+	}
 
 	service := knative.Service{
 		TypeMeta: metav1.TypeMeta{
@@ -42,21 +51,55 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 			APIVersion: "serving.knative.dev/v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: username,
+			Name:      username,
+			Namespace: "default",
 		},
 		Spec: knative.ServiceSpec{
 			ConfigurationSpec: knative.ConfigurationSpec{
 				Template: knative.RevisionTemplateSpec{
 					Spec: knative.RevisionSpec{
 						PodSpec: corev1.PodSpec{
-							RuntimeClassName: &runTime,
 							Containers: []corev1.Container{
 								{
 									Name:  username,
-									Image: s.image,
+									Image: s.Config.Image,
 									Ports: []corev1.ContainerPort{
 										{
-											ContainerPort: 8080,
+											ContainerPort: 8081,
+										},
+									},
+									Env: []corev1.EnvVar{
+										{
+											Name:  "USE_INSECURE_HTTP",
+											Value: "true",
+										},
+										{
+											Name:  "FRONTEND_URL",
+											Value: s.Config.FRONTEND_URL,
+										},
+										{
+											Name:  "FRONTEND_HOST",
+											Value: s.Config.FRONTEND_HOST,
+										},
+										{
+											Name:  "BACKEND_URL",
+											Value: s.Config.BACKEND_URL,
+										},
+									},
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											MountPath: "/data",
+											Name:      "data",
+										},
+									},
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: "data",
+									VolumeSource: corev1.VolumeSource{
+										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: username + "-vclaim",
 										},
 									},
 								},
@@ -68,18 +111,20 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 			RouteSpec: knative.RouteSpec{},
 		},
 	}
+	service.Spec.Template.Spec.PodSpec.Containers[0].Resources = sgx
 	// Create Deployment
-	result, err := s.clients.Services.Create(ctx, &service, metav1.CreateOptions{})
+
+	result, err := s.Clients.Knative.Services.Create(ctx, &service, metav1.CreateOptions{})
 	if err != nil {
 		return "", err
 	}
 	fmt.Printf("Waiting for Service to transition to Ready...")
-	if err := WaitForServiceState(s.clients, result.Name, IsServiceReady, "ServiceIsReady"); err != nil {
+	if err := test.WaitForServiceState(s.Clients.Knative, result.Name, test.IsServiceReady, "ServiceIsReady"); err != nil {
 		return "", err
 	}
 
 	fmt.Printf("Checking to ensure Service Status is populated for Ready service")
-	if err := CheckServiceState(s.clients, result.Name, func(s *knative.Service) (bool, error) {
+	if err := test.CheckServiceState(s.Clients.Knative, result.Name, func(s *knative.Service) (bool, error) {
 		if s.Status.URL == nil || s.Status.URL.Host == "" {
 			return false, fmt.Errorf("url is not present in Service status: %v", s)
 		}
@@ -97,7 +142,7 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 	}); err != nil {
 		return "", err
 	}
-	res, err := s.clients.Routes.Get(ctx, username, metav1.GetOptions{})
+	res, err := s.Clients.Knative.Routes.Get(ctx, username, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -105,71 +150,84 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 	return res.Status.URL.String(), nil
 }
 
-func (clients *ServingClients) DeleteServiceForUser(ctx context.Context, username string) []error {
+func (kub *Kubernetes) DeleteServiceForUser(ctx context.Context, username string) []error {
 	propPolicy := metav1.DeletePropagationForeground
 	dopt := metav1.DeleteOptions{
 		PropagationPolicy: &propPolicy,
 	}
 
 	var errors []error
-	if err := clients.Services.Delete(ctx, username, dopt); err != nil {
+	if err := kub.Knative.Services.Delete(ctx, username, dopt); err != nil {
 		errors = append(errors, err)
 	}
-	if err := clients.Services.Delete(ctx, username, dopt); err != nil {
+	if err := kub.Knative.Services.Delete(ctx, username, dopt); err != nil {
 		errors = append(errors, err)
 	}
-	if err := clients.Routes.Delete(ctx, username, dopt); err != nil {
+	if err := kub.Knative.Routes.Delete(ctx, username, dopt); err != nil {
 		errors = append(errors, err)
 	}
 
-	if err := clients.Configs.Delete(ctx, username, dopt); err != nil {
+	if err := kub.Knative.Configs.Delete(ctx, username, dopt); err != nil {
 		errors = append(errors, err)
 	}
 	return errors
 }
 
-// Functionfrom https://github.com/knative/serving/blob/main/test/v1/service.go
-func WaitForServiceState(client *ServingClients, name string, inState func(s *knative.Service) (bool, error), desc string) error {
-	span := logging.GetEmitableSpan(context.Background(), fmt.Sprintf("WaitForServiceState/%s/%s", name, desc))
-	defer span.End()
+func (s *Server) CreatePersistentVolume(ctx context.Context, vclaim_name string, volume_name string, user string) {
 
-	var lastState *knative.Service
-	waitErr := wait.PollImmediate(test.PollInterval, test.PollTimeout, func() (bool, error) {
-		err := reconciler.RetryTestErrors(func(int) (err error) {
-			lastState, err = client.Services.Get(context.Background(), name, metav1.GetOptions{})
-			return err
-		})
-		if err != nil {
-			return true, err
-		}
-		return inState(lastState)
-	})
-
-	if waitErr != nil {
-		return fmt.Errorf("service %q is not in desired state, got: %#v: %w", name, lastState, waitErr)
+	volume := corev1.PersistentVolume{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "PersistentVolume",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: volume_name,
+			Labels: map[string]string{
+				"type": "local",
+			},
+		},
+		Spec: corev1.PersistentVolumeSpec{
+			StorageClassName: "manual",
+			Capacity: corev1.ResourceList{
+				"storage": resource.MustParse("10Mi"),
+			},
+			AccessModes: []corev1.PersistentVolumeAccessMode{"ReadWriteOnce"},
+			PersistentVolumeSource: corev1.PersistentVolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: "/elonwallet/user/" + user},
+			},
+			ClaimRef: &corev1.ObjectReference{
+				Name:      vclaim_name,
+				Namespace: "default",
+			},
+		},
 	}
-	return nil
+	s.Clients.Kubernetes.CoreV1().PersistentVolumes().Create(ctx, &volume, metav1.CreateOptions{})
 }
 
-// Function from https://github.com/knative/serving/blob/main/test/v1/service.go
-func CheckServiceState(client *ServingClients, name string, inState func(s *knative.Service) (bool, error)) error {
-	var s *knative.Service
-	err := reconciler.RetryTestErrors(func(int) (err error) {
-		s, err = client.Services.Get(context.Background(), name, metav1.GetOptions{})
-		return err
-	})
-	if err != nil {
-		return err
+func (s *Server) CreatePersistentVolumeClaim(ctx context.Context, vclaim_name string, volume_name string, user string) {
+	manual := "manual"
+	volumeClaim := corev1.PersistentVolumeClaim{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "PersistentVolumeClaim",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: vclaim_name,
+			Labels: map[string]string{
+				"type": "local",
+			},
+			Namespace: "default",
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			StorageClassName: &manual,
+			AccessModes:      []corev1.PersistentVolumeAccessMode{"ReadWriteOnce"},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					"storage": resource.MustParse("5Mi"),
+				},
+			},
+			VolumeName: volume_name,
+		},
 	}
-	if done, err := inState(s); err != nil {
-		return err
-	} else if !done {
-		return fmt.Errorf("service %q is not in desired state, got: %#v", name, s)
-	}
-	return nil
-}
-
-// Function from https://github.com/knative/serving/blob/main/test/v1/service.go
-func IsServiceReady(s *knative.Service) (bool, error) {
-	return s.IsReady(), nil
+	s.Clients.Kubernetes.CoreV1().PersistentVolumeClaims("default").Create(ctx, &volumeClaim, metav1.CreateOptions{})
 }
