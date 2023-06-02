@@ -31,14 +31,9 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 	volume := username + "-volume"
 	s.CreatePersistentVolume(ctx, vclaim, volume, username)
 	s.CreatePersistentVolumeClaim(ctx, vclaim, volume, username)
-	//"resources": map[string]interface{}{
-	//	"limits": map[string]interface{}{
-	//		"sgx.intel.com/epc": "2Mi",
-	//	},
-	//},
-	sgx := corev1.ResourceRequirements{}
+	sgx_resources := corev1.ResourceRequirements{}
 	if s.Config.SGX_ACTIVATE {
-		sgx = corev1.ResourceRequirements{
+		sgx_resources = corev1.ResourceRequirements{
 			Limits: corev1.ResourceList{
 				"sgx.intel.com/epc": resource.MustParse("2Mi"),
 			},
@@ -111,8 +106,9 @@ func (s *Server) DeployContainer(ctx context.Context, username string) (string, 
 			RouteSpec: knative.RouteSpec{},
 		},
 	}
-	service.Spec.Template.Spec.PodSpec.Containers[0].Resources = sgx
 	// Create Deployment
+
+	service.Spec.ConfigurationSpec.Template.Spec.PodSpec.Containers[0].Resources = sgx_resources
 
 	result, err := s.Clients.Knative.Services.Create(ctx, &service, metav1.CreateOptions{})
 	if err != nil {

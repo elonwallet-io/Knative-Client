@@ -57,6 +57,7 @@ type Config struct {
 	Image         string
 	FRONTEND_URL  string
 	FRONTEND_HOST string
+	WILDCARD      bool
 	BACKEND_URL   string
 	SGX_ACTIVATE  bool
 }
@@ -68,7 +69,7 @@ type User struct {
 func New() (*Server, error) {
 	e := echo.New()
 	e.Server.ReadTimeout = 5 * time.Second
-	e.Server.WriteTimeout = 30 * time.Second
+	e.Server.WriteTimeout = 120 * time.Second
 	e.Server.IdleTimeout = 120 * time.Second
 	kubeconf, err := rest.InClusterConfig()
 	if err != nil {
@@ -83,13 +84,22 @@ func New() (*Server, error) {
 	if err != nil {
 		panic(err)
 	}
+	image_name := os.Getenv("IMAGENAME")
+	if sgx_activate {
+		image_name = image_name + "-sgx"
+	}
+	wildcard, err := strconv.ParseBool(os.Getenv("USE_WILDCARD_CERT"))
+	if err != nil {
+		panic(err)
+	}
 
 	return &Server{
 		Echo:    echo.New(),
 		Clients: clients,
 		Config: Config{
-			Image:         os.Getenv("IMAGENAME"),
+			Image:         image_name,
 			FRONTEND_URL:  os.Getenv("FRONTEND_URL"),
+			WILDCARD:      wildcard,
 			BACKEND_URL:   os.Getenv("BACKEND_URL"),
 			FRONTEND_HOST: os.Getenv("FRONTEND_HOST"),
 			SGX_ACTIVATE:  sgx_activate,
@@ -132,6 +142,10 @@ func (s *Server) deployment(c echo.Context) error {
 				fmt.Println("error: " + err.Error())
 				return c.JSON(http.StatusInternalServerError, err.Error())
 			}
+		}
+		fmt.Println(route)
+		if s.Config.WILDCARD {
+			route = "https" + route[4:]
 		}
 		fmt.Println(route)
 		return c.JSON(http.StatusOK, Url{Url: route})
