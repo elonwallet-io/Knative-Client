@@ -2,6 +2,7 @@ package server
 
 import (
 	"backend/kubernetes_client/server/config"
+	"backend/kubernetes_client/server/kubernetes"
 	"context"
 	"net/http"
 	"os"
@@ -17,7 +18,7 @@ func New() (*Server, error) {
 	e.Server.IdleTimeout = 120 * time.Second
 	return &Server{
 		Echo:    echo.New(),
-		Clients: createKubernetesClients(),
+		Clients: kubernetes.CreateKubernetesClients(),
 		Config:  config.CreateConfig(),
 	}, nil
 }

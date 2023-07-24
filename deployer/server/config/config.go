@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-func createConfig() Config {
+func CreateConfig() Config {
 	sgx_activate, err := strconv.ParseBool(os.Getenv("SGX_ACTIVATE"))
 	if err != nil {
 		panic(err)

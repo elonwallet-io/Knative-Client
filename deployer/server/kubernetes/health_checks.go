@@ -21,6 +21,7 @@ const (
 	TIMEOUT   = 180 * time.Second
 )
 
+//Waits until the Knative service is ready
 func waitUntillKnativeServiceIsUp(knative_client *clients.ServingClients, wallet_service *knative.Service) error {
 	if err := test.WaitForServiceState(knative_client, wallet_service.Name, test.IsServiceReady, "ServiceIsReady"); err != nil {
 		return err
