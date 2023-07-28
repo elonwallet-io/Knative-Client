@@ -115,6 +115,9 @@ func isSGXActivated(sgx_active bool, service *knative.Service) {
 			},
 		}
 		service.Spec.ConfigurationSpec.Template.Spec.PodSpec.Volumes = append(service.Spec.ConfigurationSpec.Template.Spec.PodSpec.Volumes, sgx_driver...)
+
 		service.Spec.ConfigurationSpec.Template.Spec.PodSpec.Containers[0].VolumeMounts = append(service.Spec.ConfigurationSpec.Template.Spec.PodSpec.Containers[0].VolumeMounts, sgx_driver_mount...)
+		privileged := true
+		service.Spec.ConfigurationSpec.Template.Spec.PodSpec.Containers[0].SecurityContext = &corev1.SecurityContext{Privileged: &privileged}
 	}
 }

@@ -3,20 +3,21 @@ package config
 import (
 	"os"
 	"strconv"
+
+	"github.com/rs/zerolog/log"
 )
 
 func CreateConfig() Config {
 	sgx_activate, err := strconv.ParseBool(os.Getenv("SGX_ACTIVATE"))
 	if err != nil {
-		panic(err)
+		log.Error().Err(err).Caller().Str("Parse", "Env").Msg(err.Error())
+		sgx_activate = true
 	}
 	image_name := os.Getenv("IMAGE_WALLET_SERVICE")
-	if sgx_activate {
-		image_name = image_name + "-sgx"
-	}
 	wildcard, err := strconv.ParseBool(os.Getenv("USE_WILDCARD_CERT"))
 	if err != nil {
-		panic(err)
+		log.Error().Err(err).Caller().Str("Parse", "Env").Msg(err.Error())
+		wildcard = false
 	}
 	return Config{
 		Images: Images{
